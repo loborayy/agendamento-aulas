@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pedidos de aulas</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Figtree:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="estilo.css">
+</head>
+<body>
+<header class="topo slim"><div class="in" style="width:100%;max-width:760px">
+  <div><div class="marca">DuoAulas</div><h1>Pedidos de aulas</h1></div>
+  <button class="btn btn-claro" id="notif" onclick="ativarNotif()">Ativar avisos</button>
+</div></header>
+
+<main>
+  <nav class="nav" role="tablist">
+    <button class="aba on" id="t1" role="tab" onclick="aba(1)">Pedidos <span class="bolha zero" id="cnt">0</span></button>
+    <button class="aba" id="t2" role="tab" onclick="aba(2)">Meus horários</button>
+  </nav>
+
+  <section id="s1">
+    <div class="filtros" id="filtros"></div>
+    <div id="pedidos"></div>
+  </section>
+
+  <section id="s2" class="hide">
+    <div class="painel">
+      <p class="passo" style="margin-bottom:12px">Lançar horário livre</p>
+      <div class="form-h">
+        <div class="campo"><label for="hd">Data</label><input type="date" id="hd"></div>
+        <div class="campo"><label for="hi">Início</label><input type="time" id="hi"></div>
+        <div class="campo"><label for="hf">Fim</label><input type="time" id="hf"></div>
+        <div class="campo"><label for="hr">Repetir por quantas semanas</label><input type="number" id="hr" min="1" max="26" value="1"></div>
+        <button class="btn btn-p" onclick="addHorario()">Adicionar horário</button>
+      </div>
+      <p class="dica">Para lançar o mesmo horário nas próximas semanas de uma vez, aumente o número de semanas.</p>
+    </div>
+    <div id="horarios"></div>
+    <p class="rodape-link"><a href="agendar.html" target="_blank" rel="noopener">Abrir a página dos alunos</a></p>
+  </section>
+</main>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="firebase-config.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+function el(tag, cls, txt){ const e = document.createElement(tag); if(cls) e.className = cls; if(txt != null) e.textContent = txt; return e; }
+const TITULO = document.title;
+let primeira = true, lista = [], filtro = 'novo';
+
+function aba(n){
+  $('s1').classList.toggle('hide', n!==1); $('s2').classList.toggle('hide', n!==2);
+  $('t1').classList.toggle('on', n===1); $('t2').classList.toggle('on', n===2);
+}
+let tAviso;
+function aviso(t){
+  document.querySelectorAll('.aviso').forEach(a=>a.remove());
+  const a = el('div','aviso',t); a.setAttribute('role','status'); document.body.appendChild(a);
+  clearTimeout(tAviso); tAviso = setTimeout(()=>a.remove(), 2600);
+}
+
+/* ---------- Avisos ---------- */
+function estadoNotif(){
+  if(!('Notification' in window)){ $('notif').textContent = 'Sem suporte a avisos'; return; }
+  $('notif').textContent = Notification.permission==='granted' ? 'Avisos ativados' : Notification.permission==='denied' ? 'Avisos bloqueados' : 'Ativar avisos';
+}
+function ativarNotif(){
+  if(!('Notification' in window)){ alert('Este navegador não suporta notificações.'); return; }
+  Notification.requestPermission().then(estadoNotif);
+}
+estadoNotif();
+function beep(){
+  try{ const c = new (window.AudioContext||window.webkitAudioContext)(), o = c.createOscillator(), g = c.createGain();
+    o.connect(g); g.connect(c.destination); o.frequency.value = 880; g.gain.value = .15; o.start(); o.stop(c.currentTime+.25); }catch(e){}
+}
+function avisarNovo(p){
+  beep();
+  if('Notification' in window && Notification.permission==='granted')
+    new Notification('Novo pedido de aula', {body: `${p.aluno} pediu ${fmtData(p.data)}, ${p.inicio}`});
+}
+
+/* ---------- Pedidos ---------- */
+db.collection('pedidos').orderBy('criadoEm','desc').onSnapshot(snap=>{
+  if(!primeira) snap.docChanges().forEach(c=>{ if(c.type==='added') avisarNovo(c.doc.data()); });
+  primeira = false;
+  lista = snap.docs.map(d=>({id:d.id,...d.data()}));
+  const novos = lista.filter(p=>p.status==='novo').length;
+  $('cnt').textContent = novos; $('cnt').classList.toggle('zero', !novos);
+  document.title = novos ? `(${novos}) ${TITULO}` : TITULO;
+  render();
+});
+
+function ha(ts){
+  if(!ts) return 'agora';
+  const s = (Date.now() - ts.toDate().getTime())/1000;
+  if(s < 90) return 'agora há pouco';
+  if(s < 3600) return `há ${Math.round(s/60)} min`;
+  if(s < 86400) return `há ${Math.round(s/3600)} h`;
+  const d = Math.round(s/86400); return d === 1 ? 'ontem' : `há ${d} dias`;
+}
+
+function render(){
+  const cont = { novo: lista.filter(p=>p.status==='novo').length, confirmado: lista.filter(p=>p.status==='confirmado').length, todos: lista.length };
+  const f = $('filtros'); f.innerHTML = '';
+  [['novo','Novos'],['confirmado','Confirmados'],['todos','Todos']].forEach(([k,nome])=>{
+    const b = el('button','filtro', `${nome} (${cont[k]})`); b.setAttribute('aria-pressed', filtro===k);
+    b.onclick = ()=>{ filtro = k; render(); }; f.appendChild(b);
+  });
+
+  const box = $('pedidos'); box.innerHTML = '';
+  const itens = filtro==='todos' ? lista : lista.filter(p=>p.status===filtro);
+  if(!itens.length){
+    box.innerHTML = `<div class="painel vazio"><b>${filtro==='novo' ? 'Nenhum pedido novo' : 'Nada por aqui'}</b>${filtro==='novo' ? 'Quando um aluno escolher um horário, o pedido aparece aqui.' : 'Mude o filtro para ver outros pedidos.'}</div>`;
+    return;
+  }
+  itens.forEach(p=>{
+    const dt = new Date(p.data+'T00:00:00');
+    const c = el('article','pedido '+p.status);
+    const can = el('div','canhoto');
+    can.append(el('div','n', String(dt.getDate())), el('div','m', dt.toLocaleDateString('pt-BR',{month:'short'}).replace('.','')),
+      el('div','m', dt.toLocaleDateString('pt-BR',{weekday:'short'}).replace('.','')), el('div','h', p.inicio));
+    const corpo = el('div','corpo');
+    corpo.appendChild(el('div','estado', p.status==='novo' ? 'Novo pedido' : p.status==='confirmado' ? 'Confirmado' : 'Recusado'));
+    corpo.appendChild(el('h3','', p.aluno));
+    corpo.appendChild(el('div','linha', `${p.quem}, ${p.tipo.toLowerCase()}` + (p.fim ? `, das ${p.inicio} às ${p.fim}` : '')));
+    corpo.appendChild(el('div','linha', `${p.responsavel ? 'Responsável: '+p.responsavel+'. ' : ''}WhatsApp ${p.whatsapp}. Pedido ${ha(p.criadoEm)}.`));
+    if(p.mensagem) corpo.appendChild(el('div','recado', p.mensagem));
+
+    const ac = el('div','acoes');
+    const dig = (p.whatsapp||'').replace(/\D/g,''); const num = dig.length <= 11 ? '55'+dig : dig;
+    const z = el('a','btn btn-zap','Chamar no WhatsApp'); z.target = '_blank'; z.rel = 'noopener';
+    z.href = `https://wa.me/${num}?text=` + encodeURIComponent(`Olá! Sobre o pedido de aula em ${fmtData(p.data)}, ${p.inicio}: `);
+    ac.appendChild(z);
+    if(p.status==='novo'){
+      const ok = el('button','btn btn-ok','Confirmar'); ok.onclick = ()=>decidir(p,'confirmado');
+      const no = el('button','btn btn-s','Recusar'); no.onclick = ()=>decidir(p,'recusado');
+      ac.append(ok,no);
+    }
+    const del = el('button','btn btn-s','Apagar'); del.onclick = ()=>{ if(confirm('Apagar este pedido?')) db.collection('pedidos').doc(p.id).delete(); };
+    ac.appendChild(del);
+    corpo.appendChild(ac);
+    c.append(can,corpo); box.appendChild(c);
+  });
+}
+
+async function decidir(p, status){
+  await db.collection('pedidos').doc(p.id).update({status});
+  // recusar devolve o horário para a lista dos alunos
+  await db.collection('horarios').doc(p.horarioId).update({status: status==='confirmado' ? 'confirmado' : 'livre'}).catch(()=>{});
+  aviso(status==='confirmado' ? 'Confirmado' : 'Recusado. O horário voltou para a lista.');
+}
+
+/* ---------- Horários ---------- */
+async function addHorario(){
+  const d = $('hd').value, i = $('hi').value, f = $('hf').value, n = Math.max(1, parseInt($('hr').value) || 1);
+  if(!d || !i){ alert('Escolha a data e o horário de início.'); return; }
+  const batch = db.batch();
+  for(let k=0;k<n;k++){
+    const dt = new Date(d+'T00:00:00'); dt.setDate(dt.getDate()+7*k);
+    const iso = new Date(dt.getTime()-dt.getTimezoneOffset()*60000).toISOString().slice(0,10);
+    batch.set(db.collection('horarios').doc(), {data:iso, inicio:i, fim:f, status:'livre'});
+  }
+  await batch.commit();
+  $('hi').value = ''; $('hf').value = ''; $('hr').value = 1;
+  aviso(n > 1 ? `${n} horários adicionados` : 'Horário adicionado');
+}
+
+db.collection('horarios').onSnapshot(snap=>{
+  const hoje = hojeISO();
+  const itens = snap.docs.map(d=>({id:d.id,...d.data()})).filter(s=>s.data>=hoje)
+    .sort((a,b)=>(a.data+a.inicio).localeCompare(b.data+b.inicio));
+  const box = $('horarios'); box.innerHTML = '';
+  if(!itens.length){ box.innerHTML = '<div class="vazio"><b>Nenhum horário lançado</b>Use o formulário acima para criar o primeiro.</div>'; return; }
+  const porDia = {}; itens.forEach(s=>(porDia[s.data] ||= []).push(s));
+  Object.keys(porDia).forEach(d=>{
+    const g = el('div','grupo'); g.appendChild(el('h3','', fmtData(d)));
+    const fi = el('div','fichas');
+    porDia[d].forEach(s=>{
+      const f = el('div','ficha '+s.status);
+      f.append(el('span','', s.inicio + (s.fim ? ' às ' + s.fim : '')),
+        el('small','', s.status==='livre' ? 'livre' : s.status==='reservado' ? 'aguardando você' : 'confirmado'));
+      const x = el('button','','×'); x.setAttribute('aria-label','Remover horário'); x.title = 'Remover';
+      x.onclick = ()=>{ if(confirm('Remover este horário?')) db.collection('horarios').doc(s.id).delete(); };
+      f.appendChild(x); fi.appendChild(f);
+    });
+    g.appendChild(fi); box.appendChild(g);
+  });
+});
+</script>
+</body>
+</html>

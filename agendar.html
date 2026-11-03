@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agendar aula de matemática</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Figtree:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="./estilo.css">
+</head>
+<body>
+<header class="topo"><div class="in">
+  <div class="marca">DuoAulas</div>
+  <h1>Escolha o dia e o horário da sua aula</h1>
+  <p>Toque em um dia, depois em um horário livre. A professora confirma pelo WhatsApp.</p>
+</div></header>
+
+<main>
+  <div id="lista"><div class="painel vazio">Carregando horários…</div></div>
+</main>
+
+<div class="fundo" id="fundo"><div class="folha" id="folha" role="dialog" aria-modal="true" aria-labelledby="ft"></div></div>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="firebase-config.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+function el(tag, cls, txt){ const e = document.createElement(tag); if(cls) e.className = cls; if(txt != null) e.textContent = txt; return e; }
+let slots = [], diaSel = null, escolhido = null;
+
+db.collection('horarios').where('status','==','livre').onSnapshot(snap=>{
+  const hoje = hojeISO();
+  slots = snap.docs.map(d=>({id:d.id,...d.data()})).filter(s=>s.data>=hoje)
+    .sort((a,b)=>(a.data+a.inicio).localeCompare(b.data+b.inicio));
+  render();
+}, err=>{
+  $('lista').innerHTML = '<div class="painel vazio"><b>Não foi possível carregar</b>Verifique sua conexão e recarregue a página.</div>';
+  console.error(err);
+});
+
+function render(){
+  const box = $('lista'); box.innerHTML = '';
+  if(!slots.length){
+    box.innerHTML = '<div class="painel vazio"><b>Nenhum horário livre agora</b>Volte em breve ou fale direto com a professora.</div>';
+    return;
+  }
+  const dias = [...new Set(slots.map(s=>s.data))];
+  if(!dias.includes(diaSel)) diaSel = dias[0];
+
+  box.appendChild(el('h2','passo','1. Escolha o dia'));
+  const tira = el('div','dias');
+  dias.forEach(d=>{
+    const dt = new Date(d+'T00:00:00');
+    const b = el('button','dia'); b.setAttribute('aria-pressed', d===diaSel);
+    b.append(
+      el('span','sem', dt.toLocaleDateString('pt-BR',{weekday:'short'}).replace('.','')),
+      el('span','num', String(dt.getDate())),
+      el('span','mes', dt.toLocaleDateString('pt-BR',{month:'short'}).replace('.',''))
+    );
+    b.onclick = ()=>{ diaSel = d; render(); };
+    tira.appendChild(b);
+  });
+  box.appendChild(tira);
+
+  box.appendChild(el('h2','passo','2. Escolha o horário'));
+  const painel = el('div','painel');
+  painel.appendChild(el('p','dia-titulo', fmtData(diaSel)));
+  const grade = el('div','horas');
+  slots.filter(s=>s.data===diaSel).forEach(s=>{
+    const b = el('button','hora', s.inicio);
+    if(s.fim) b.appendChild(el('small','', 'até ' + s.fim));
+    b.onclick = ()=>abrir(s);
+    grade.appendChild(b);
+  });
+  painel.appendChild(grade); box.appendChild(painel);
+}
+
+function abrir(s){
+  escolhido = s;
+  $('folha').innerHTML = `
+    <div class="folha-topo"><h2 id="ft">Pedir este horário</h2><button class="x" aria-label="Fechar" onclick="fechar()">×</button></div>
+    <div class="faixa" id="faixa"></div>
+    <fieldset><legend>Quem está pedindo?</legend><div class="seg">
+      <input type="radio" name="quem" id="q1" value="Aluno antigo" checked><label for="q1">Aluno antigo</label>
+      <input type="radio" name="quem" id="q2" value="Aluno novo"><label for="q2">Aluno novo</label>
+      <input type="radio" name="quem" id="q3" value="Responsável"><label for="q3">Pai, mãe ou responsável</label>
+    </div></fieldset>
+    <fieldset><legend>Tipo de aula</legend><div class="seg">
+      <input type="radio" name="tipo" id="t1" value="Reposição" checked><label for="t1">Reposição</label>
+      <input type="radio" name="tipo" id="t2" value="Aula extra"><label for="t2">Aula extra</label>
+      <input type="radio" name="tipo" id="t3" value="Primeira aula"><label for="t3">Primeira aula</label>
+    </div></fieldset>
+    <div class="campo"><label for="aluno">Nome do aluno</label><input type="text" id="aluno" autocomplete="off"></div>
+    <div class="campo"><label for="resp">Seu nome, se for o responsável (opcional)</label><input type="text" id="resp" autocomplete="name"></div>
+    <div class="campo"><label for="zap">WhatsApp com DDD</label><input type="tel" id="zap" inputmode="tel" placeholder="(21) 99999-9999" autocomplete="tel"></div>
+    <div class="campo"><label for="msg">Recado (opcional)</label><textarea id="msg" placeholder="Qual conteúdo quer revisar? Qual série?"></textarea></div>
+    <div class="acoes"><button class="btn btn-s" onclick="fechar()">Cancelar</button><button class="btn btn-p" id="env" onclick="enviar()">Enviar pedido</button></div>`;
+  $('faixa').textContent = fmtData(s.data) + ', ' + s.inicio + (s.fim ? ' às ' + s.fim : '');
+  $('fundo').classList.add('on');
+  setTimeout(()=>$('aluno').focus(), 50);
+}
+function fechar(){ $('fundo').classList.remove('on'); }
+$('fundo').addEventListener('click', e=>{ if(e.target.id==='fundo') fechar(); });
+document.addEventListener('keydown', e=>{ if(e.key==='Escape') fechar(); });
+
+const radio = n => document.querySelector(`input[name="${n}"]:checked`).value;
+
+async function enviar(){
+  const aluno = $('aluno').value.trim(), zap = $('zap').value.trim();
+  if(!aluno){ alert('Digite o nome do aluno.'); $('aluno').focus(); return; }
+  if(zap.replace(/\D/g,'').length < 10){ alert('Digite um WhatsApp válido, com DDD.'); $('zap').focus(); return; }
+  const btn = $('env'); btn.disabled = true; btn.textContent = 'Enviando…';
+  const hRef = db.collection('horarios').doc(escolhido.id);
+  const pRef = db.collection('pedidos').doc();
+  try{
+    await db.runTransaction(async tx=>{
+      const h = await tx.get(hRef);
+      if(!h.exists || h.data().status !== 'livre') throw new Error('ocupado');
+      tx.update(hRef,{status:'reservado'});
+      tx.set(pRef,{
+        horarioId: escolhido.id, data: escolhido.data, inicio: escolhido.inicio, fim: escolhido.fim || '',
+        quem: radio('quem'), tipo: radio('tipo'), aluno, responsavel: $('resp').value.trim(),
+        whatsapp: zap, mensagem: $('msg').value.trim(), status: 'novo',
+        criadoEm: firebase.firestore.FieldValue.serverTimestamp()
+      });
+    });
+    $('folha').innerHTML = `<div class="sucesso"><div class="ok">✓</div>
+      <h2>Pedido enviado</h2><p>A professora vai confirmar o horário pelo seu WhatsApp.</p>
+      <div class="acoes"><button class="btn btn-p" onclick="fechar()">Fechar</button></div></div>`;
+  }catch(e){
+    if(e.message === 'ocupado'){ alert('Esse horário acabou de ser escolhido por outra pessoa. Escolha outro.'); fechar(); }
+    else { alert('Não foi possível enviar. Tente de novo.'); console.error(e); btn.disabled = false; btn.textContent = 'Enviar pedido'; }
+  }
+}
+</script>
+</body>
+</html>
